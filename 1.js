@@ -259,9 +259,6 @@ const css = `
       border-radius: 4px;
       margin-top: 8px;
     }
-    .twitter-bot--tweets__profiles {
-      width: 100%;
-    }
   `;
 
 // ****************** Handle logic call api twitter ************************* //
@@ -397,7 +394,6 @@ function queryTweets(authorization, userId, cursor) {
                 const legacy =
                   ins.entry.content.itemContent.tweet_results.result.legacy;
                 result.push({
-                  ...legacy,
                   tweetId: legacy.conversation_id_str,
                   content: legacy.full_text,
                   created_at: new Date(legacy.created_at).getTime(),
@@ -596,7 +592,12 @@ async function startBot() {
             </div>
             <div class="twitter-bot--tweets">
               <div class="twitter-bot--tweets__title">Profiles</div>
-              <textarea class="twitter-bot--tweets__profiles" id="twitter-bot-profiles" rows="4" placeholder="Example: twitterid1,twitterid2">${profiles || ''}</textarea>
+              <textarea class="twitter-bot--tweets__profiles" id="twitter-bot-profiles" rows="4" placeholder="Example: twitterid1,twitterid2">
+              ${profiles || ''}
+              </textarea>
+              <div style="display: flex; width: 100%; justify-content: center;">
+                <button id="bot-add-tweet">Add Profile</button>
+              </div>
             </div>
             <div style="display: flex; align-items: center;justify-content: space-between; margin-top: 12px;">
               <div class="bot-form--tweets">
