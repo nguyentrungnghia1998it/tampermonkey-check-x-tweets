@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name         Twitter bot
 // @namespace    http://tampermonkey.net/
-// @version      2.0
+// @version      4.0
 // @description  notify new tweet
 // @author       You
 // @match        https://x.com/*
@@ -259,54 +259,105 @@ const css = `
   `;
 
 // ****************** Handle logic call api twitter ************************* //
+class ApiManager {
+  constructor() {
+    this.queue = [];
+    this.isProcessing = false;
+  }
 
-function setHeaders(xhr, authorization, notSetJson) {
-  const xCsrfToken = document.cookie
-    .split("; ")
-    .find((item) => item.includes("ct0="))
-    ?.split("=")[1];
+  enqueue(url, authorization) {
+    return new Promise((resolve, reject) => {
+      this.queue.push({ url, authorization, resolve, reject });
+      this.processQueue();
+    });
+  }
 
-  xhr.setRequestHeader("authorization", authorization);
-  xhr.setRequestHeader("x-csrf-token", xCsrfToken);
-  xhr.setRequestHeader("x-twitter-active-user", "yes");
-  xhr.setRequestHeader("x-twitter-auth-type", "OAuth2Session");
-  xhr.setRequestHeader("x-twitter-client-language", "en");
-  if (!notSetJson) {
-    xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
+  async processQueue() {
+    if (this.isProcessing || this.queue.length === 0) {
+      return;
+    }
+
+    this.isProcessing = true;
+
+    const request = this.queue.shift();
+
+    try {
+      const data = await this.executeRequest(request);
+      request.resolve(data);
+    } catch (error) {
+      request.reject(error);
+    }
+
+    this.isProcessing = false;
+
+    if (this.queue.length > 0) {
+      setTimeout(() => this.processQueue(), 1000); // 1 second delay
+    }
+  }
+
+  setHeaders(xhr, authorization) {
+    const xCsrfToken = document.cookie
+      .split("; ")
+      .find((item) => item.includes("ct0="))
+      ?.split("=")[1];
+  
+    xhr.setRequestHeader("authorization", authorization);
+    xhr.setRequestHeader("x-csrf-token", xCsrfToken);
+    xhr.setRequestHeader("x-twitter-active-user", "yes");
+    xhr.setRequestHeader("x-twitter-auth-type", "OAuth2Session");
+    xhr.setRequestHeader("x-twitter-client-language", "en");
+  }
+  
+  async executeRequest(request) {
+    // const response = await fetch(request.url, request.options);
+    // if (!response.ok) {
+    //   const text = await res.text();
+    //   throw new Error(text);
+    // }
+    // const data = await response.json();
+    // if (request.callback) {
+    //   request.callback(data);
+    // }
+    // return data;
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open(
+        "GET",
+        request.url,
+        true
+      );
+      this.setHeaders(xhr, request.authorization);
+  
+      xhr.onload = function () {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          const data = JSON.parse(xhr.response);
+          resolve(data);
+        } else {
+          reject(xhr.response);
+        }
+      };
+      xhr.onerror = (err) => {
+        reject(err);
+      };
+      xhr.send(null);
+    })
   }
 }
 
-function getUserRestId(authorization, profile) {
+const apiManager = new ApiManager();
+
+async function getUserRestId(authorization, profile) {
   const exist = localStorage.getItem(`save-profile-id-${profile}`);
   if (exist) {
     return exist;
   }
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open(
-      "GET",
-      `https://x.com/i/api/graphql/_pnlqeTOtnpbIL9o-fS_pg/ProfileSpotlightsQuery?variables=${encodeURIComponent(
+  const data = await apiManager.enqueue(`https://x.com/i/api/graphql/_pnlqeTOtnpbIL9o-fS_pg/ProfileSpotlightsQuery?variables=${encodeURIComponent(
         `{"screen_name":"${profile}"}`
-      )}`,
-      true
-    );
-    setHeaders(xhr, authorization);
+      )}`, authorization);
+  const id = data.data.user_result_by_screen_name.result.rest_id;
+          localStorage.setItem(`save-profile-id-${profile}`, id);
+  return id;
 
-    xhr.onload = function () {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        const data = JSON.parse(xhr.response);
-        const id = data.data.user_result_by_screen_name.result.rest_id;
-        localStorage.setItem(`save-profile-id-${profile}`, id);
-        resolve(id);
-      } else {
-        reject(xhr.response);
-      }
-    };
-    xhr.onerror = (err) => {
-      reject(err);
-    };
-    xhr.send(null);
-  });
 }
 
 async function initTweetsStorage(authorization, userId) {
@@ -316,6 +367,7 @@ async function initTweetsStorage(authorization, userId) {
   let cursor = '';
 
   console.log('initTweetsStorage');
+  let isError = false;
   for (let i = 0; i < limit / per; i++) {
     try {
       const resp = await queryTweets(authorization, userId, cursor);
@@ -329,11 +381,15 @@ async function initTweetsStorage(authorization, userId) {
       console.log('init error:', {
         error, userId
       });
+      isError = true;
+      break;
     }
   }
 
   console.log('init result', result);
-  localStorage.setItem(`tweets_storage_${userId}`, JSON.stringify(result));
+  if (!isError) {
+    localStorage.setItem(`tweets_storage_${userId}`, JSON.stringify(result));
+  }
 }
 
 async function getNewTweets(authorization, userId, keyword) {
@@ -367,72 +423,54 @@ async function getNewTweets(authorization, userId, keyword) {
   }
 }
 
-function queryTweets(authorization, userId, cursor) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open(
-      "GET",
-      `https://x.com/i/api/graphql/V1ze5q3ijDS1VeLwLY0m7g/UserTweets?variables=%7B%22userId%22%3A%22${userId}%22%2C%22count%22%3A20%2C${
-        cursor ? `%22cursor%22%3A%22${encodeURIComponent(cursor)}%22%2C` : ""
-      }%22includePromotedContent%22%3Atrue%2C%22withQuickPromoteEligibilityTweetFields%22%3Atrue%2C%22withVoice%22%3Atrue%2C%22withV2Timeline%22%3Atrue%7D&features=%7B%22responsive_web_graphql_exclude_directive_enabled%22%3Atrue%2C%22verified_phone_label_enabled%22%3Afalse%2C%22creator_subscriptions_tweet_preview_api_enabled%22%3Atrue%2C%22responsive_web_graphql_timeline_navigation_enabled%22%3Atrue%2C%22responsive_web_graphql_skip_user_profile_image_extensions_enabled%22%3Afalse%2C%22c9s_tweet_anatomy_moderator_badge_enabled%22%3Atrue%2C%22tweetypie_unmention_optimization_enabled%22%3Atrue%2C%22responsive_web_edit_tweet_api_enabled%22%3Atrue%2C%22graphql_is_translatable_rweb_tweet_is_translatable_enabled%22%3Atrue%2C%22view_counts_everywhere_api_enabled%22%3Atrue%2C%22longform_notetweets_consumption_enabled%22%3Atrue%2C%22responsive_web_twitter_article_tweet_consumption_enabled%22%3Afalse%2C%22tweet_awards_web_tipping_enabled%22%3Afalse%2C%22freedom_of_speech_not_reach_fetch_enabled%22%3Atrue%2C%22standardized_nudges_misinfo%22%3Atrue%2C%22tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled%22%3Atrue%2C%22rweb_video_timestamps_enabled%22%3Atrue%2C%22longform_notetweets_rich_text_read_enabled%22%3Atrue%2C%22longform_notetweets_inline_media_enabled%22%3Atrue%2C%22responsive_web_media_download_video_enabled%22%3Afalse%2C%22responsive_web_enhance_cards_enabled%22%3Afalse%7D`,
-      true
-    );
-    setHeaders(xhr, authorization);
-
-    xhr.onload = function () {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        const data = JSON.parse(xhr.response);
-        const result = [];
-        let cursor = '';
-        data.data.user.result.timeline_v2.timeline.instructions.forEach(
-          (ins) => {
-            if (!cursor && ins.entry) {
-              try {
-                const legacy =
-                  ins.entry.content.itemContent.tweet_results.result.legacy;
-                result.push({
-                  ...legacy,
-                  tweetId: legacy.conversation_id_str,
-                  content: legacy.full_text,
-                  created_at: new Date(legacy.created_at).getTime(),
-                });
-              } catch {}
-            }
-            if (ins.entries) {
-              for (const entry of ins.entries) {
-                try {
-                  if (entry.entryId.startsWith('tweet-')) {
-                    const legacy =
-                      entry.content.itemContent.tweet_results.result.legacy;
-                    const newValue = {
-                      tweetId: legacy.conversation_id_str,
-                      content: legacy.full_text,
-                      created_at: new Date(legacy.created_at).getTime(),
-                    };
-                    if (!result.find(item => item.tweetId === newValue.tweetId)) {
-                      result.push(newValue);
-                    }
-                  } else if (entry.entryId.startsWith('cursor-bottom-')) {
-                    cursor = entry.content.value;
-                  }
-                } catch {}
-              }
-            }
-          }
-        );
-        resolve({
-          tweets: result,
-          cursor
-        });
-      } else {
-        reject(xhr.response);
+async function queryTweets(authorization, userId, cursorArg) {
+  const data = await apiManager.enqueue( `https://x.com/i/api/graphql/V1ze5q3ijDS1VeLwLY0m7g/UserTweets?variables=%7B%22userId%22%3A%22${userId}%22%2C%22count%22%3A20%2C${
+        cursorArg ? `%22cursor%22%3A%22${encodeURIComponent(cursorArg)}%22%2C` : ""
+      }%22includePromotedContent%22%3Atrue%2C%22withQuickPromoteEligibilityTweetFields%22%3Atrue%2C%22withVoice%22%3Atrue%2C%22withV2Timeline%22%3Atrue%7D&features=%7B%22responsive_web_graphql_exclude_directive_enabled%22%3Atrue%2C%22verified_phone_label_enabled%22%3Afalse%2C%22creator_subscriptions_tweet_preview_api_enabled%22%3Atrue%2C%22responsive_web_graphql_timeline_navigation_enabled%22%3Atrue%2C%22responsive_web_graphql_skip_user_profile_image_extensions_enabled%22%3Afalse%2C%22c9s_tweet_anatomy_moderator_badge_enabled%22%3Atrue%2C%22tweetypie_unmention_optimization_enabled%22%3Atrue%2C%22responsive_web_edit_tweet_api_enabled%22%3Atrue%2C%22graphql_is_translatable_rweb_tweet_is_translatable_enabled%22%3Atrue%2C%22view_counts_everywhere_api_enabled%22%3Atrue%2C%22longform_notetweets_consumption_enabled%22%3Atrue%2C%22responsive_web_twitter_article_tweet_consumption_enabled%22%3Afalse%2C%22tweet_awards_web_tipping_enabled%22%3Afalse%2C%22freedom_of_speech_not_reach_fetch_enabled%22%3Atrue%2C%22standardized_nudges_misinfo%22%3Atrue%2C%22tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled%22%3Atrue%2C%22rweb_video_timestamps_enabled%22%3Atrue%2C%22longform_notetweets_rich_text_read_enabled%22%3Atrue%2C%22longform_notetweets_inline_media_enabled%22%3Atrue%2C%22responsive_web_media_download_video_enabled%22%3Afalse%2C%22responsive_web_enhance_cards_enabled%22%3Afalse%7D`, authorization);
+  
+  const result = [];
+  let cursor = '';
+  data.data.user.result.timeline_v2.timeline.instructions.forEach(
+    (ins) => {
+      if (!cursor && ins.entry) {
+        try {
+          const legacy =
+            ins.entry.content.itemContent.tweet_results.result.legacy;
+          result.push({
+            ...legacy,
+            tweetId: legacy.conversation_id_str,
+            content: legacy.full_text,
+            created_at: new Date(legacy.created_at).getTime(),
+          });
+        } catch {}
       }
-    };
-    xhr.onerror = (err) => {
-      reject(err);
-    };
-    xhr.send(null);
-  });
+      if (ins.entries) {
+        for (const entry of ins.entries) {
+          try {
+            if (entry.entryId.startsWith('tweet-')) {
+              const legacy =
+                entry.content.itemContent.tweet_results.result.legacy;
+              const newValue = {
+                ...legacy,
+                tweetId: legacy.conversation_id_str,
+                content: legacy.full_text,
+                created_at: new Date(legacy.created_at).getTime(),
+              };
+              if (!result.find(item => item.tweetId === newValue.tweetId)) {
+                result.push(newValue);
+              }
+            } else if (entry.entryId.startsWith('cursor-bottom-')) {
+              cursor = entry.content.value;
+            }
+          } catch {}
+        }
+      }
+    }
+  );
+  return {
+    tweets: result,
+    cursor
+  };
 }
 
 function formatDate(time) {
@@ -508,8 +546,8 @@ async function startBot() {
   ).value;
   const intervalStr = document.querySelector("#twitter-bot-interval").value;
   const profilesStr = document.querySelector("#twitter-bot-profiles").value;
-  const profiles = profilesStr.trim().replace(" ", "").split(",");
-
+  const profiles = profilesStr.trim().replaceAll(" ", "").split(",");
+  console.log("profiles", profiles)
   if (!profiles.length) {
     return alert("Please input profiles!");
   }
@@ -525,6 +563,15 @@ async function startBot() {
   document.querySelector("#twitter-bot-start").innerHTML = "Stop";
   isBotStarted = true;
 
+  localStorage.setItem(
+    "twitter-bot-storage",
+    JSON.stringify({
+      authorization: authorization,
+      interval: interval / 1000,
+      profiles: profilesStr,
+    })
+  );
+  
   console.log("result", {
     authorization: authorization,
     interval: interval,
@@ -537,14 +584,18 @@ async function startBot() {
       index === profiles.findIndex((el) => el === value)
   );
 
-  validProfiles.forEach(async (profile) => {
+  let initFinish = false;
+  for (let profile of validProfiles) {
     try {
       const userId = await getUserRestId(authorization, profile);
       console.log("userId", userId);
       await initTweetsStorage(authorization, userId);
+      console.log("initTweetsStorage done ", userId);
       if (isBotStarted) {
         intervals[profile] = setInterval(() => {
-          checkProfile(authorization, profile, userId);
+          if (initFinish) {
+             checkProfile(authorization, profile, userId);
+          }         
         }, interval);
       }
     } catch (error) {
@@ -553,7 +604,8 @@ async function startBot() {
         profile
       })
     }
-  });
+  }
+  initFinish = true
 }
 
 // ***************** Handle render **************************//
