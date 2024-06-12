@@ -68,7 +68,6 @@ const css = `
       display: flex;
       flex-direction: column;
     }
-
     .twitter-bot--form textarea {
       padding: 10px;
       max-width: 100%;
@@ -77,11 +76,9 @@ const css = `
       border: 1px solid #ddd;
       background: white;
     }
-
     .twitter-bot--form textarea:focus {
       outline: none;
     }
-
     .twitter-bot--form input {
       padding: 10px;
       border-radius: 4px;
@@ -90,7 +87,6 @@ const css = `
       width: 100%;
       background: white;
     }
-
     .bot-form--tweets label {
       display: block;
       margin-bottom: 10px;
@@ -171,13 +167,11 @@ const css = `
     .bot-form--tweets textarea {
       width: 100%;
     }
-
     .twitter-bot--result {
       display: flex;
       flex-direction: column;
       flex-grow: 1;
     }
-
     .twitter-bot--title {
       font-size: 20px;
       font-weight: bold;
@@ -258,6 +252,9 @@ const css = `
       border: 1px solid #dadada;
       border-radius: 4px;
       margin-top: 8px;
+    }
+    .twitter-bot--tweets__profiles {
+      width: 100%;
     }
   `;
 
@@ -394,6 +391,7 @@ function queryTweets(authorization, userId, cursor) {
                 const legacy =
                   ins.entry.content.itemContent.tweet_results.result.legacy;
                 result.push({
+                  ...legacy,
                   tweetId: legacy.conversation_id_str,
                   content: legacy.full_text,
                   created_at: new Date(legacy.created_at).getTime(),
@@ -584,7 +582,6 @@ async function startBot() {
        <div class="twitter-bot--box">
        <div class="twitter-bot--form">
           <div class="bot-form--header">Twitter Noti Bot</div>
-
           <div class="bot-form--content">
             <div class="bot-form--tweets">
               <label for="authorization">Authorization:</label>
@@ -592,12 +589,7 @@ async function startBot() {
             </div>
             <div class="twitter-bot--tweets">
               <div class="twitter-bot--tweets__title">Profiles</div>
-              <textarea class="twitter-bot--tweets__profiles" id="twitter-bot-profiles" rows="4" placeholder="Example: twitterid1,twitterid2">
-              ${profiles || ''}
-              </textarea>
-              <div style="display: flex; width: 100%; justify-content: center;">
-                <button id="bot-add-tweet">Add Profile</button>
-              </div>
+              <textarea class="twitter-bot--tweets__profiles" id="twitter-bot-profiles" rows="4" placeholder="Example: twitterid1,twitterid2">${profiles || ''}</textarea>
             </div>
             <div style="display: flex; align-items: center;justify-content: space-between; margin-top: 12px;">
               <div class="bot-form--tweets">
@@ -615,7 +607,6 @@ async function startBot() {
           Result
         </div>
           <div class="twitter-bot--list">
-
           </div>
        </div>
        </div>
